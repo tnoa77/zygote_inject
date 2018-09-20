@@ -1,10 +1,9 @@
-#include <stdio.h>
 #include <stdlib.h>
-#include <sys/wait.h>
-#include <sys/mman.h>
-#include <asm-generic/mman-common.h>
-#include <sys/ptrace.h>
+#include <unistd.h>
 #include <asm/ptrace.h>
+#include <sys/ptrace.h>
+#include <sys/mman.h>
+#include <sys/wait.h>
 #include <dlfcn.h>
 #include <dirent.h>
 #include <android/log.h>
@@ -74,32 +73,43 @@ pid_t ptrace_zygote(pid_t zygote_pid) {
 	}
 
 	struct pt_regs orig_regs, regs;
-	ptrace(PTRACE_GETREGS, zygote_pid, NULL, orig_regs);
+
+	if (ptrace(PTRACE_GETREGS, zygote_pid, NULL, orig_regs) < 0) {
+		LOGE("prtace getregs failed.");
+		ptrace(PTRACE_DETACH, zygote_pid, NULL, NULL);
+		return -1;
+	}
+
 	memcpy(&regs, &orig_regs, sizeof(struct pt_regs));
 	print_regs(&orig_regs);
 
 	remote_mmap = get_remote_addr(zygote_pid, LIBC_PATH, (void*) mmap);
 	if (remote_mmap == 0) {
+		LOGE("get remote mmap addr failed.");
 		ptrace(PTRACE_DETACH, zygote_pid, NULL, NULL);
 		return -1;
 	}
 	remote_dlopen = get_remote_addr(zygote_pid, LINKER_PATH, (void*) dlopen);
 	if (remote_dlopen == 0) {
+		LOGE("get remote dlopen addr failed.");
 		ptrace(PTRACE_DETACH, zygote_pid, NULL, NULL);
 		return -1;
 	}
 	remote_dlsym = get_remote_addr(zygote_pid, LINKER_PATH, (void*) dlsym);
 	if (remote_dlsym == 0) {
+		LOGE("get remote dlsym addr failed.");
 		ptrace(PTRACE_DETACH, zygote_pid, NULL, NULL);
 		return -1;
 	}
 	remote_dlclose = get_remote_addr(zygote_pid, LINKER_PATH, (void*) dlclose);
 	if (remote_dlclose == 0) {
+		LOGE("get remote dlclose addr failed.");
 		ptrace(PTRACE_DETACH, zygote_pid, NULL, NULL);
 		return -1;
 	}
 	remote_dlerror = get_remote_addr(zygote_pid, LINKER_PATH, (void*) dlerror);
 	if (remote_dlerror == 0) {
+		LOGE("get remote dlerror addr failed.");
 		ptrace(PTRACE_DETACH, zygote_pid, NULL, NULL);
 		return -1;
 	}
@@ -113,15 +123,16 @@ pid_t ptrace_zygote(pid_t zygote_pid) {
 	parameters[4] = 0; //fd
 	parameters[5] = 0; //offset
 
-	if (ptrace_call(pid, "mmap", remote_mmap, parameters, 6, &regs) == -1) {
-		return ptrace_call_error(pid, "mmap");
-	}
-
 	LOGI("remote_mmap addr: [%08x]", (uint32_t )remote_mmap);
 	LOGI("remote_dlopen addr: [%08x]", (uint32_t )remote_dlopen);
 	LOGI("remote_dlsym addr: [%08x]", (uint32_t )remote_dlsym);
 	LOGI("remote_dlclose addr: [%08x]", (uint32_t )remote_dlclose);
 	LOGI("remote_dlerror addr: [%08x]", (uint32_t )remote_dlerror);
+
+	if (ptrace_call(pid, "mmap", remote_mmap, parameters, 6, &regs) == -1) {
+		ptrace(PTRACE_DETACH, zygote_pid, NULL, NULL);
+		return ptrace_call_error(pid, "mmap");
+	}
 
 	LOGI("ptrace attach succeed.");
 	ptrace(PTRACE_DETACH, zygote_pid, NULL, NULL);
